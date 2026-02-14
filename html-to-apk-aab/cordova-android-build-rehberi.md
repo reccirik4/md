@@ -906,15 +906,11 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 | **E-posta** | recepyeni@gmail.com |
 | **Telefon** | +905056279048 |
 | **Şehir / İl / Ülke** | Tekirdağ / Tekirdağ / Türkiye |
-| **Web Sitesi (aktif domain)** | okubirlikte.com |
 | **GitHub Pages** | recinilt.github.io |
-| **Privacy Policy URL** | https://recinilt.github.io/mefeypublic/recinilt/keysafe-tr/privacy-policy.html |
 | **CORS Proxy** | https://mycors.recepyeni.workers.dev |
 | **Bilgisayar** | Windows 10 Pro, RTX 3050 laptop |
-| **config.xml widget ID** | com.recepyeni.sifrehatirlatici |
 | **config.xml author email** | recepyeni@gmail.com |
-| **config.xml author href** | https://okubirlikte.com |
-| **Firebase Project ID** | sifrehatirlatici-cf65d |
+
 
 ### Google Play Console Bilgileri
 | Alan | Değer |
@@ -922,22 +918,18 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 | Geliştirici adı | Recep Yeni |
 | İletişim e-postası | recepyeni@gmail.com |
 | İletişim telefonu | +905056279048 |
-| Web sitesi | https://okubirlikte.com |
-| Gizlilik politikası URL | https://recinilt.github.io/mefeypublic/recinilt/keysafe-tr/privacy-policy.html |
 | Adres | Tekirdağ, Türkiye |
 
 ### ⚠️ Kurallar
 - `recepyeni.com` domaini YOK — kullanma
-- `vr-sinema.online` domaini artık geçerli DEĞİL — kullanma
-- Aktif domain: `okubirlikte.com`
-- Privacy policy GitHub Pages'te barındırılıyor (yukarıdaki URL)
-- config.xml widget ID (`com.recepyeni.sifrehatirlatici`) yayından sonra DEĞİŞTİRİLEMEZ
+- Aktif domain: `https://recinilt.github.io/mefeypublic/recinilt/`
+- Privacy policy GitHub Pages'te barındırılıyor (yukarıdaki URL, / işaretinden sonraki kısmı sor.)
 
 ---
 
 ## 15. Hesap Silme Özelliği (Google Play Zorunluluğu)
 
-> Google Play, Kasım 2023'ten itibaren kullanıcılara uygulama içinden hesap ve veri silme imkanı sunmayı zorunlu kıldı. KeySafe TR bu özelliği içerir.
+> Google Play, Kasım 2023'ten itibaren kullanıcılara uygulama içinden hesap ve veri silme imkanı sunmayı zorunlu kıldı. 
 
 ### Uygulama İçi Akış
 1. Menü → "Hesabımı Sil" butonuna tıkla
