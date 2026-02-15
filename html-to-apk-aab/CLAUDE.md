@@ -171,6 +171,7 @@ proje-adi/
   <plugin name="cordova-plugin-device" spec="*" />
   <plugin name="cordova-plugin-statusbar" spec="*" />
   <plugin name="cordova-plugin-file" spec="*" />
+  <plugin name="cordova-android-movetasktoback" spec="*" />
 
   <!-- === MOTOR (ZORUNLU — eksik olursa uyumsuz platform yüklenebilir) === -->
   <engine name="android" spec="14.0.1" />
@@ -858,7 +859,7 @@ document.addEventListener('resume', function() {
 ```
 
 > **3 katlı mekanizma:** (1) `fireQueuedEvents` → `on('paid')` + `findPaymentByNotifId` || (2) `launchDetails.id` + `findPaymentByNotifId` || (3) `localStorage marker` + `onAppReady`/`resume`.
-> **Önemli:** `moveTaskToBack` plugin'i gereksiz — cold start mekanizması artık `notification.id` (güvenilir) üzerinden çalışıyor, `exitApp()` ile kapatma sonrası da işliyor.
+> **Not:** Tüm projelerde `exitApp()` yerine `arkaPlanaGonder()` (moveTaskToBack) kullanılıyor. Uygulama kapanmak yerine arka plana gider, cold start yerine warm resume olur. Bkz. Bölüm 9.29.
 
 ### 9.26 ❌ Firebase Sync Çalışmıyor — goOffline/goOnline Auth Token Race
 **Belirti:** Auth çalışıyor (giriş yapılabiliyor) ama veriler Firebase'e yazılmıyor. Sync sonrası `oh_lastSync` null kalıyor. Catch bloğunda hata maskeleniyor: `Sync hatasi (internet yok olabilir)`.
@@ -1124,6 +1125,64 @@ set_bug_report: { tr: 'Hata Raporu Gönder', en: 'Send Bug Report' },
 > **Not:** Firebase init sırasındaki ilk `goOffline()` (local-first mimari) de kalmalı — uygulama başlangıcında offline modda başlamak doğru davranış.
 > **İlişkili:** Bu sorun 9.26'daki `getIdToken(true)` düzeltmesiyle birlikte çalışır. Token yenileme + goOffline kaldırma birlikte tam çözümü oluşturur.
 
+### 9.29 ✅ exitApp() Yerine moveTaskToBack — Arka Plana Gönderme (TÜM UYGULAMALARDA ZORUNLU)
+
+**Amaç:** Kullanıcı çıkış yaptığında veya bildirimden işlem sonrası uygulama kapanmasın, arka plana gitsin. Tekrar açılışta anında gelsin (cold start yok). WhatsApp, Telegram gibi standart Android davranışı.
+
+**Google Play uyumluluğu:** `Activity.moveTaskToBack(true)` standart Android API'sidir. Google Play politikalarında (2026 Ocak güncellemesi dahil) bunu yasaklayan madde yoktur. Çoğu popüler uygulama bu davranışı kullanır.
+
+**Plugin:** `cordova-android-movetasktoback` — tek Java dosyası, `Activity.moveTaskToBack(true)` çağırır. cordova-android 14 ile tam uyumlu (AndroidX/support bağımlılığı yok).
+
+**config.xml:**
+```xml
+<plugin name="cordova-android-movetasktoback" spec="*" />
+```
+
+**Helper fonksiyon (app.js — back button bölümünden önce):**
+```javascript
+// ══════════════════════════════════════════════════════════
+// ARKA PLANA GONDER (exitApp yerine)
+// ══════════════════════════════════════════════════════════
+function arkaPlanaGonder() {
+  _fn('arkaPlanaGonder');
+  if (window.mayflower && mayflower.moveTaskToBack) {
+    mayflower.moveTaskToBack();
+  }
+}
+```
+
+**Değiştirilecek noktalar:** Projedeki TÜM `navigator.app.exitApp()` çağrıları `arkaPlanaGonder()` ile değiştirilmeli. Tipik yerler:
+1. **Back button handler** — dashboard'dayken çıkış onayı sonrası
+2. **Bildirim "Ödendi" aksiyonu** — `on('paid')` handler'da 3sn sonra
+3. **Cold start pending paid** — işlem tamamlandıktan sonra
+4. **Resume pending paid** — işlem tamamlandıktan sonra
+5. **Cold start launchDetails** — notifications.js'deki tüm paid akışları
+
+**Örnek — Back button:**
+```javascript
+// ❌ ESKİ
+showConfirmDialog(t('confirm_exit'), function() {
+    navigator.app.exitApp();
+});
+
+// ✅ YENİ
+showConfirmDialog(t('confirm_exit'), function() {
+    arkaPlanaGonder();
+});
+```
+
+**Örnek — Bildirim ödendi sonrası:**
+```javascript
+// ❌ ESKİ
+setTimeout(function() { if (navigator && navigator.app && navigator.app.exitApp) navigator.app.exitApp(); }, 3000);
+
+// ✅ YENİ
+setTimeout(function() { arkaPlanaGonder(); }, 3000);
+```
+
+> **Kural:** Projede hiçbir yerde `navigator.app.exitApp()` KALMAMALI. Tüm çıkış noktaları `arkaPlanaGonder()` kullanmalı.
+> **Not:** `cikisYap()` (auth.signOut) dokunulmaz — o sadece oturum kapatır, uygulama kapatmaz.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -1219,6 +1278,9 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Sync: `syncWithFirebase()` içinde `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor
 - [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK (WebSocket'i öldürür!)
 - [ ] Sync: catch bloğunda gerçek hata loglanıyor (maskeleme yok!)
+- [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
+- [ ] moveTaskToBack: `arkaPlanaGonder()` fonksiyonu app.js'de tanımlı
+- [ ] moveTaskToBack: Projede `navigator.app.exitApp()` KALMADI — tümü `arkaPlanaGonder()` ile değiştirildi
 - [ ] `cordova build android` → BUILD SUCCESSFUL
 
 ### VoltBuilder
@@ -1237,6 +1299,8 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Logger: Kalıcı ring buffer + `_fn()` izleme + Hata Raporu Gönder butonu mevcut
 - [ ] Sync: `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor + hata maskeleme kaldırılmış
 - [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK
+- [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
+- [ ] moveTaskToBack: Projede `navigator.app.exitApp()` KALMADI — tümü `arkaPlanaGonder()` ile değiştirildi
 
 ### Google Play
 - [ ] Keystore oluşturuldu + yedeklendi
