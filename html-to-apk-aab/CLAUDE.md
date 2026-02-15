@@ -1229,6 +1229,59 @@ if (!payment) {
 ```
 > **i18n:** `pay_not_found` anahtarı i18n.js'e eklenmeli: `{ tr: 'Ödeme bulunamadı', en: 'Payment not found' }`
 
+### 9.32 ❌ Stale Bildirimler — local_ ID → Firebase ID Dönüşümü Sonrası Bildirimlerin Güncellenmemesi
+**Belirti:** Yeni eklenen ödeme için bildirim geliyor, "Ödendi İşaretle" tıklanıyor → "Ödeme bulunamadı" toast mesajı. Logda: `Odeme bulunamadi (silinmis olabilir): local_1771184903976_fwg8gu1mw`. Firebase ID'li (`-OlXq9...`) bildirimler sorunsuz çalışıyor.
+**Sebep:** `syncWithFirebase()` (db.js) `local_` ID'leri Firebase push key'e dönüştürüyor ve `idMap` oluşturuyor. Ancak bildirimler güncellenmiyordu:
+1. Ödeme eklenir → `local_xxx` ID → `schedulePaymentNotifications()` ile bildirim zamanlanır (`data.paymentId = 'local_xxx'`)
+2. `debouncedSync` → `syncWithFirebase()` → `local_xxx` → `-OlXq9...` dönüşümü
+3. `paymentsCache` güncellenir (artık sadece Firebase ID)
+4. Bildirim tetiklenir → `data.paymentId = 'local_xxx'` → cache'te bulunamaz
+5. `findPaymentByNotifId` de bulamaz çünkü `paymentIdToNumeric('local_xxx') ≠ paymentIdToNumeric('-OlXq9...')`
+
+**Çözüm:** `syncWithFirebase()` sonunda, `paymentsCacheGuncelle()` sonrasına bildirim temizleme bloğu eklendi. `idMap` doluysa eski `local_` ID'li bildirimler iptal edilip yeni Firebase ID ile yeniden zamanlanıyor:
+```javascript
+// === STALE BİLDİRİM TEMİZLİĞİ ===
+// local_ ID -> Firebase ID dönüşümü olduysa eski bildirimleri iptal et, yeni ID ile yeniden zamanla
+if (Object.keys(idMap).length > 0 && typeof cancelPaymentNotifications === 'function' && typeof schedulePaymentNotifications === 'function') {
+  console.log('syncWithFirebase: idMap dolu (' + Object.keys(idMap).length + ' donusum), bildirimler guncelleniyor...');
+  for (var eskiLocalId in idMap) {
+    if (idMap.hasOwnProperty(eskiLocalId)) {
+      try {
+        cancelPaymentNotifications(eskiLocalId);
+        var yeniFirebaseId = idMap[eskiLocalId];
+        var guncelOdeme = mergedPayments.find(function(p) { return p.id === yeniFirebaseId; });
+        if (guncelOdeme && guncelOdeme.isActive !== false && guncelOdeme.status !== 'paid' && guncelOdeme.status !== 'completed') {
+          schedulePaymentNotifications(guncelOdeme);
+        }
+      } catch (notifErr) { console.warn('Bildirim guncelleme hatasi:', notifErr); }
+    }
+  }
+}
+```
+> **Konum:** db.js — `syncWithFirebase()` fonksiyonu, `paymentsCacheGuncelle();` satırından hemen sonra, `settingsCache = {};` bloğundan önce.
+> **Etki:** Ödeme ekle → sync → local_ ID dönüşür → eski bildirim iptal + yeni bildirim zamanlanır. Stale bildirim kalmaz.
+
+### 9.33 ❌ Bildirim Deprecated Property Uyarıları (cordova-plugin-local-notification v1.1.0+)
+**Belirti:** Her bildirim zamanlamada console'da 5 uyarı tekrarlanıyor:
+```
+Property "foreground" is deprecated since version 1.1.0. Use "iOSForeground" instead.
+Property "vibrate" is deprecated since version 1.1.1. Use "androidChannelEnableVibration" instead.
+Property "smallIcon" is deprecated since version 1.1.0. Use "androidSmallIcon" instead.
+Property "priority" is deprecated since version 1.1.0. Use androidChannelImportance, androidAlarmType and androidAllowWhileIdle instead.
+Unknown property: iOSForeground
+```
+**Sebep:** Plugin v1.1.0'da property adları değişti. Eski adlar hâlâ çalışıyor ama deprecated uyarı basıyor. Ödeme başına 2-3 bildirim × 5 uyarı = loglar gereksiz kirleniyor.
+**Çözüm:** `notifications.js`'deki 3 `schedule()` bloğunda (schedulePaymentNotifications, scheduleOverdueReminders, snooze handler) eski property'ler yenileriyle değiştirildi:
+
+| Eski (deprecated) | Yeni |
+|---|---|
+| `foreground: true` | Kaldırıldı (Android'de gereksiz, `iOSForeground` zaten true by default) |
+| `vibrate: true` | `androidChannelEnableVibration: true` |
+| `smallIcon: 'res://icon'` | `androidSmallIcon: 'res://icon'` |
+| `priority: 2` / `priority: 1` | `androidChannelImportance: 'IMPORTANCE_HIGH'` / `'IMPORTANCE_DEFAULT'` |
+
+> **Etki:** Console'daki 10-15 deprecated uyarı satırı tamamen temizlenir. Fonksiyonel değişiklik yok — bildirimler aynı şekilde çalışır.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -1330,6 +1383,8 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] db.js: `cikisYapildi()` içinde `hideLoading()` çağrısı `typeof` guard ile sarılı
 - [ ] notifications.js: `on('paid')` handler'da ödeme bulunamazsa `findPaymentByNotifId` fallback + stale bildirim iptal
 - [ ] i18n.js: `pay_not_found` çevirisi mevcut
+- [ ] db.js: `syncWithFirebase()` sonunda `idMap` doluysa eski `local_` ID'li bildirimleri iptal + yeni Firebase ID ile yeniden zamanla
+- [ ] notifications.js: `schedule()` bloklarında deprecated property YOK (`foreground`, `vibrate`, `smallIcon`, `priority` → yeni adlarla değiştirilmiş)
 - [ ] `cordova build android` → BUILD SUCCESSFUL
 
 ### VoltBuilder
@@ -1353,6 +1408,8 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] db.js: `cikisYapildi()` içinde `hideLoading()` çağrısı `typeof` guard ile sarılı
 - [ ] notifications.js: `on('paid')` handler'da ödeme bulunamazsa `findPaymentByNotifId` fallback + stale bildirim iptal
 - [ ] i18n.js: `pay_not_found` çevirisi mevcut
+- [ ] db.js: `syncWithFirebase()` sonunda `idMap` doluysa eski `local_` ID'li bildirimleri iptal + yeni Firebase ID ile yeniden zamanla
+- [ ] notifications.js: `schedule()` bloklarında deprecated property YOK (`foreground`, `vibrate`, `smallIcon`, `priority` → yeni adlarla değiştirilmiş)
 
 ### Google Play
 - [ ] Keystore oluşturuldu + yedeklendi
