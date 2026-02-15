@@ -860,6 +860,162 @@ document.addEventListener('resume', function() {
 > **3 katlı mekanizma:** (1) `fireQueuedEvents` → `on('paid')` + `findPaymentByNotifId` || (2) `launchDetails.id` + `findPaymentByNotifId` || (3) `localStorage marker` + `onAppReady`/`resume`.
 > **Önemli:** `moveTaskToBack` plugin'i gereksiz — cold start mekanizması artık `notification.id` (güvenilir) üzerinden çalışıyor, `exitApp()` ile kapatma sonrası da işliyor.
 
+### 9.26 ❌ Firebase Sync Çalışmıyor — goOffline/goOnline Auth Token Race
+**Belirti:** Auth çalışıyor (giriş yapılabiliyor) ama veriler Firebase'e yazılmıyor. Sync sonrası `oh_lastSync` null kalıyor. Catch bloğunda hata maskeleniyor: `Sync hatasi (internet yok olabilir)`.
+**Sebep:** `firebase.database()` oluşturulur oluşmaz `goOffline()` çağrılıyor (local-first mimari). Auth state değiştiğinde database SDK offline olduğu için token bildirimini alamıyor. `goOnline()` yapıldığında eski/null token ile bağlanıyor → `PERMISSION_DENIED`. Ayrıca catch bloğu tüm hataları aynı mesajla yuttuğu için gerçek sebep görünmüyor.
+**Çözüm (2 adım):**
+1. `syncWithFirebase()` içinde `goOnline()`'dan ÖNCE `await mevcutKullanici.getIdToken(true)` çağır. Bu, database SDK'ya taze token gitmesini garanti eder:
+```javascript
+// syncWithFirebase() başlangıcı:
+try {
+    await mevcutKullanici.getIdToken(true);
+    console.log('syncWithFirebase: token yenilendi');
+} catch (tokenErr) {
+    console.error('syncWithFirebase: TOKEN YENILEME HATASI:', tokenErr.code || tokenErr.message);
+    throw tokenErr;
+}
+fbDb.goOnline();
+await new Promise(function(r) { setTimeout(r, 800); });
+```
+2. Catch bloğundaki hata maskelemeyi kaldır, gerçek hatayı logla:
+```javascript
+catch (e) {
+    var hataMesaji = e.message || e.code || String(e);
+    console.error('syncWithFirebase HATA:', hataMesaji);
+    if (hataMesaji.indexOf('PERMISSION_DENIED') !== -1) {
+        console.error('>>> PERMISSION_DENIED: Firebase rules erisimi engelliyor!');
+    }
+}
+```
+> `hesapSilKalici()` fonksiyonunda da aynı `getIdToken(true)` düzeltmesi uygulanmalı.
+> Bekleme süresini 600ms'den 800ms'ye çıkar — Europe-West1 gibi bölgesel database'lerde WebSocket kurulumu daha uzun sürebilir.
+
+### 9.27 ✅ Hata Raporu Logger Sistemi (TÜM UYGULAMALARDA KULLAN)
+**Amaç:** Kullanıcı "çalışmıyor" dediğinde logu mail ile gönderip sorunu anında teşhis etmek. DEV_MODE flag'ına gerek yok — logger her zaman çalışır, performans etkisi sıfır.
+**Mimari — 2 katmanlı:**
+1. **Ring Buffer Logger** (db.js'in en başına, Firebase config'den ÖNCE):
+   - `console.log/warn/error` intercept → `_logBuffer` array'e push
+   - Her satır: `HH:MM:SS.mmm [LOG/WRN/ERR] mesaj`
+   - Max 500 satır (eski loglar otomatik silinir)
+   - `window.error` ve `unhandledrejection` event'leri de yakalanır
+2. **Hata Raporu Gönder** butonu (Ayarlar sayfasında):
+   - Cihaz bilgisi + uygulama durumu + son 500 log satırı → TXT dosyası
+   - socialsharing `df:dosyaadi;data:text/plain;base64,...` formatıyla paylaşım
+   - Kullanıcı tek tuşla mail atabilir
+
+**Uygulama:**
+
+**1) db.js'in EN BAŞINA (tüm kodlardan önce, Firebase config'den bile önce):**
+```javascript
+// LOGGER — Ring Buffer (her zaman aktif, max 500 satir)
+var _logBuffer = [];
+var _LOG_MAX = 500;
+
+function _logEkle(seviye, args) {
+  var zaman = new Date().toISOString().substr(11, 12);
+  var mesaj = '';
+  for (var i = 0; i < args.length; i++) {
+    if (i > 0) mesaj += ' ';
+    try {
+      if (typeof args[i] === 'object') mesaj += JSON.stringify(args[i]);
+      else mesaj += String(args[i]);
+    } catch (e) { mesaj += '[object]'; }
+  }
+  _logBuffer.push(zaman + ' [' + seviye + '] ' + mesaj);
+  if (_logBuffer.length > _LOG_MAX) _logBuffer.shift();
+}
+
+var _origLog = console.log;
+var _origWarn = console.warn;
+var _origError = console.error;
+console.log = function() { _logEkle('LOG', arguments); _origLog.apply(console, arguments); };
+console.warn = function() { _logEkle('WRN', arguments); _origWarn.apply(console, arguments); };
+console.error = function() { _logEkle('ERR', arguments); _origError.apply(console, arguments); };
+
+window.addEventListener('error', function(e) {
+  _logEkle('ERR', ['UNCAUGHT: ' + (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || '')]);
+});
+window.addEventListener('unhandledrejection', function(e) {
+  _logEkle('ERR', ['UNHANDLED_PROMISE: ' + (e.reason ? (e.reason.message || e.reason) : 'unknown')]);
+});
+```
+
+**2) db.js'in sonuna:**
+```javascript
+function hataRaporuOlustur() {
+  var satirlar = [];
+  satirlar.push('=== UYGULAMA ADI - HATA RAPORU ===');
+  satirlar.push('Tarih: ' + new Date().toISOString());
+  satirlar.push('');
+  satirlar.push('--- CIHAZ ---');
+  try {
+    if (typeof device !== 'undefined') {
+      satirlar.push('Platform: ' + (device.platform || '?'));
+      satirlar.push('Versiyon: ' + (device.version || '?'));
+      satirlar.push('Model: ' + (device.model || '?'));
+      satirlar.push('Manufacturer: ' + (device.manufacturer || '?'));
+    } else {
+      satirlar.push('Platform: ' + navigator.platform);
+      satirlar.push('UserAgent: ' + navigator.userAgent.substr(0, 120));
+    }
+  } catch (e) { satirlar.push('Cihaz bilgisi alinamadi'); }
+  satirlar.push('Ekran: ' + screen.width + 'x' + screen.height);
+  satirlar.push('Online: ' + navigator.onLine);
+  satirlar.push('');
+  satirlar.push('--- UYGULAMA DURUMU ---');
+  satirlar.push('Firebase Ready: ' + firebaseReady);
+  satirlar.push('Kullanici: ' + (mevcutKullanici ? mevcutKullanici.email : 'YOK'));
+  satirlar.push('Son Sync: ' + (getSonSyncZamani() ? new Date(getSonSyncZamani()).toISOString() : 'HIC'));
+  satirlar.push('');
+  satirlar.push('--- LOGLAR (son ' + _logBuffer.length + ' satir) ---');
+  for (var i = 0; i < _logBuffer.length; i++) {
+    satirlar.push(_logBuffer[i]);
+  }
+  return satirlar.join('\n');
+}
+
+function hataRaporuGonder() {
+  var raporText = hataRaporuOlustur();
+  var dosyaAdi = 'hata_raporu_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.txt';
+
+  if (window.plugins && window.plugins.socialsharing) {
+    var base64 = btoa(unescape(encodeURIComponent(raporText)));
+    var dataUri = 'df:' + dosyaAdi + ';data:text/plain;base64,' + base64;
+    window.plugins.socialsharing.shareWithOptions({
+      files: [dataUri],
+      subject: 'Uygulama Adi - Hata Raporu',
+      chooserTitle: 'Hata raporunu gonder'
+    }, function() {
+      if (typeof showToast === 'function') showToast('Rapor gonderildi');
+    }, function() {
+      if (typeof showToast === 'function') showToast('Gonderim iptal edildi');
+    });
+  } else {
+    var blob = new Blob([raporText], { type: 'text/plain' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = dosyaAdi; a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+```
+
+**3) index.html — Ayarlar sayfasına buton:**
+```html
+<div class="settings-item" onclick="hataRaporuGonder()">
+  <div class="set-label"><span class="set-icon">🐛</span> <span data-i18n="set_bug_report">Hata Raporu Gönder</span></div>
+  <span class="set-value">›</span>
+</div>
+```
+
+**4) i18n.js — Çeviri:**
+```javascript
+set_bug_report: { tr: 'Hata Raporu Gönder', en: 'Send Bug Report' },
+```
+
+> **Not:** `hataRaporuOlustur()` içindeki uygulama durumu bilgileri projeye göre özelleştirilmeli (cache isimleri, premium durumu vb.). Logger kısmı (`_logBuffer`, `_logEkle`, console intercept) tüm projelerde BİREBİR AYNI kalabilir.
+> **Plugin:** `cordova-plugin-x-socialsharing` ve `cordova-plugin-device` gerekli.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -944,6 +1100,12 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] `res/icon.png` (512×512+), `resources/iconTemplate.png` (1024×1024), `resources/splashTemplate.png` (2732×2732) mevcut
 - [ ] Bildirim ödendi aksiyonu: `findPaymentByNotifId()` mevcut + `on('paid')` ve cold start'ta `notification.id`'den ters eşleme kullanılıyor (data'ya bağımlılık YOK!)
 - [ ] PowerShell scriptleri ASCII-only (Türkçe karakter yok!)
+- [ ] Logger: `_logBuffer` ring buffer db.js'in EN BAŞINDA (Firebase config'den önce)
+- [ ] Logger: `hataRaporuGonder()` fonksiyonu db.js'in sonunda
+- [ ] Logger: Ayarlar sayfasında "🐛 Hata Raporu Gönder" butonu mevcut
+- [ ] Logger: i18n.js'de `set_bug_report` çevirisi mevcut
+- [ ] Sync: `syncWithFirebase()` içinde `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor
+- [ ] Sync: catch bloğunda gerçek hata loglanıyor (maskeleme yok!)
 - [ ] `cordova build android` → BUILD SUCCESSFUL
 
 ### VoltBuilder
@@ -959,6 +1121,8 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] voltbuilder.json mevcut
 - [ ] ZIP yapısı doğru (config.xml kökte)
 - [ ] Harici CDN bağımlılıkları lokal dosyalarla değiştirilmiş
+- [ ] Logger ring buffer + Hata Raporu Gönder butonu mevcut
+- [ ] Sync: `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor + hata maskeleme kaldırılmış
 
 ### Google Play
 - [ ] Keystore oluşturuldu + yedeklendi
