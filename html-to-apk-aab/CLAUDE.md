@@ -790,6 +790,76 @@ function checkPremiumStatus() {
 ```
 > **Mantık:** Google Play satın alması `true` ise → her zaman premium yap. Google Play'de yoksa → `isPremium`'a dokunma, Firebase'den gelen değer korunsun. Bu sayede hem gerçek satın alma hem admin tarafından verilen premium çalışır.
 
+### 9.25 ❌ Bildirim "Ödendi" Aksiyonu Uygulama Kapalıyken Çalışmıyor
+**Belirti:** Bildirimde "Ödendi İşaretle" butonuna basınca:
+- Uygulama **arka plandaysa** (Home tuşu ile) → çalışıyor ✅
+- Uygulama **kapalıysa** (Çıkış / exitApp) → uygulama açılıyor ama ödeme ödendi olarak işaretlenmiyor ❌
+
+**Sebep (3 ayrı sorun):**
+1. **`launchDetails.data` boş geliyor (bilinen plugin bug'ı — GitHub #1640, #1631, #1581):** `launchDetails` objesi `{id: 12345, action: 'paid'}` dönüyor ama `data` alanı `null/undefined`. `paymentId` oradan alınamıyor.
+2. **`notification.get(id)` async race condition:** Fallback olarak `get()` çağırılsa bile callback döndüğünde `onAppReady()` çoktan çalışmış, `localStorage.getItem()` → `null` bulmuş.
+3. **`fireQueuedEvents` + `on('paid')` timing sorunu (GitHub #1798):** Plugin, event'i WebView hazır olmadan ateşliyor. Listener kaydedilmeden event geliyor → kaybolıyor.
+
+**Kök neden:** Tüm mekanizmalar `notification.data`'dan `paymentId` almaya bağımlıydı. Ama `data` alanı cold start'ta güvenilir değil. Güvenilir olan tek şey: `launchDetails.id` (numeric bildirim ID) ve `launchDetails.action`.
+
+**Çözüm — Notification ID → Payment Ters Eşleme:**
+Bildirim ID'leri `paymentIdToNumeric(paymentId) * 10 + i` formülüyle üretiliyor. Ters hesaplama: `Math.floor(notifId / 10)` = baseId → `paymentsCache`'te eşleşen payment bulunur. `notification.data`'ya hiç ihtiyaç kalmaz.
+
+**1) `findPaymentByNotifId()` fonksiyonu (notifications.js):**
+```javascript
+function findPaymentByNotifId(notifId) {
+  if (!notifId && notifId !== 0) return null;
+  var baseId = Math.floor(Number(notifId) / 10);
+  if (isNaN(baseId)) return null;
+  if (typeof paymentsCache === 'undefined' || !paymentsCache || paymentsCache.length === 0) return null;
+  for (var i = 0; i < paymentsCache.length; i++) {
+    if (paymentIdToNumeric(paymentsCache[i].id) === baseId) return paymentsCache[i];
+  }
+  return null;
+}
+```
+
+**2) `on('paid')` handler'da data eksikse notifId fallback (notifications.js):**
+```javascript
+var paymentId = (data && data.paymentId) ? data.paymentId : null;
+if (!paymentId && notification && notification.id) {
+  var foundPayment = findPaymentByNotifId(notification.id);
+  if (foundPayment) paymentId = foundPayment.id;
+}
+```
+
+**3) `deviceready`'de notifId tabanlı marker (app.js) — data'ya bağımlılık yok:**
+```javascript
+if (earlyAction === 'paid') {
+  localStorage.setItem('_pendingPaidNotifId', String(earlyLd.id));
+}
+```
+
+**4) `onAppReady`'de notifId → findPaymentByNotifId → ödendi (app.js):**
+```javascript
+var pendingNotifId = localStorage.getItem('_pendingPaidNotifId');
+if (pendingNotifId && !_coldStartPaidProcessing) {
+  var payment = findPaymentByNotifId(Number(pendingNotifId));
+  if (payment && payment.status !== 'paid') {
+    await markPaymentPaid(payment.id, payment.amount);
+  }
+}
+```
+
+**5) `resume` event listener (app.js) — ek güvenlik katmanı:**
+```javascript
+document.addEventListener('resume', function() {
+  var pendingNotifId = localStorage.getItem('_pendingPaidNotifId');
+  if (pendingNotifId) {
+    var payment = findPaymentByNotifId(Number(pendingNotifId));
+    // payment bulunursa ödendi yap
+  }
+}, false);
+```
+
+> **3 katlı mekanizma:** (1) `fireQueuedEvents` → `on('paid')` + `findPaymentByNotifId` || (2) `launchDetails.id` + `findPaymentByNotifId` || (3) `localStorage marker` + `onAppReady`/`resume`.
+> **Önemli:** `moveTaskToBack` plugin'i gereksiz — cold start mekanizması artık `notification.id` (güvenilir) üzerinden çalışıyor, `exitApp()` ile kapatma sonrası da işliyor.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -872,6 +942,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Harici URL'ler: `<a href target="_blank">` DEĞİL, `window.open(url, '_system')` kullanılıyor
 - [ ] Dosya dışa aktarma: `<a download>` DEĞİL, socialsharing `df:dosyaadi;data:mimetype;base64,DATA` formatı kullanılıyor (message parametresi YOK!)
 - [ ] `res/icon.png` (512×512+), `resources/iconTemplate.png` (1024×1024), `resources/splashTemplate.png` (2732×2732) mevcut
+- [ ] Bildirim ödendi aksiyonu: `findPaymentByNotifId()` mevcut + `on('paid')` ve cold start'ta `notification.id`'den ters eşleme kullanılıyor (data'ya bağımlılık YOK!)
 - [ ] PowerShell scriptleri ASCII-only (Türkçe karakter yok!)
 - [ ] `cordova build android` → BUILD SUCCESSFUL
 
