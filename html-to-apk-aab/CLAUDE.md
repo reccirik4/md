@@ -890,26 +890,82 @@ catch (e) {
 > `hesapSilKalici()` fonksiyonunda da aynı `getIdToken(true)` düzeltmesi uygulanmalı.
 > Bekleme süresini 600ms'den 800ms'ye çıkar — Europe-West1 gibi bölgesel database'lerde WebSocket kurulumu daha uzun sürebilir.
 
-### 9.27 ✅ Hata Raporu Logger Sistemi (TÜM UYGULAMALARDA KULLAN)
-**Amaç:** Kullanıcı "çalışmıyor" dediğinde logu mail ile gönderip sorunu anında teşhis etmek. DEV_MODE flag'ına gerek yok — logger her zaman çalışır, performans etkisi sıfır.
-**Mimari — 2 katmanlı:**
-1. **Ring Buffer Logger** (db.js'in en başına, Firebase config'den ÖNCE):
+### 9.27 ✅ Kalıcı Logger + Fonksiyon İzleme Sistemi (TÜM UYGULAMALARDA ZORUNLU)
+
+**Amaç:** Kullanıcı "çalışmıyor" dediğinde logu mail ile gönderip sorunu anında teşhis etmek. Uygulama kapansa bile loglar korunur. Her fonksiyon girişi izlenir.
+
+**Mimari — 3 katmanlı:**
+1. **Kalıcı Ring Buffer Logger** (db.js'in en başına, Firebase config'den ÖNCE):
    - `console.log/warn/error` intercept → `_logBuffer` array'e push
-   - Her satır: `HH:MM:SS.mmm [LOG/WRN/ERR] mesaj`
-   - Max 500 satır (eski loglar otomatik silinir)
+   - Her satır: `HH:MM:SS.mmm [LOG/WRN/ERR/FN] mesaj`
+   - Max 1000 satır (eski loglar otomatik silinir)
+   - **localStorage'a kalıcı yazma:** 5 saniyede bir otomatik flush + pause/beforeunload'da anında flush
+   - Uygulama yeniden açılınca önceki oturum logları da yüklenir
    - `window.error` ve `unhandledrejection` event'leri de yakalanır
-2. **Hata Raporu Gönder** butonu (Ayarlar sayfasında):
-   - Cihaz bilgisi + uygulama durumu + son 500 log satırı → TXT dosyası
+2. **`_fn()` Fonksiyon İzleme** (her fonksiyonun ilk satırına eklenir):
+   - `_fn('fonksiyonAdi')` → `[FN] fonksiyonAdi` satırı loglar
+   - Gürültü filtresi: sık çağrılan yardımcı fonksiyonlar **exclude** listesinde → loglanmaz
+   - Exclude listesi projeye göre özelleştirilir (aşağıda standart liste var)
+3. **Hata Raporu Gönder** butonu (Ayarlar sayfasında):
+   - Cihaz bilgisi + uygulama durumu + son 1000 log satırı → TXT dosyası
    - socialsharing `df:dosyaadi;data:text/plain;base64,...` formatıyla paylaşım
-   - Kullanıcı tek tuşla mail atabilir
+
+#### ⚠️ `_fn()` EXCLUDE LİSTESİ — Gürültü Filtresi
+Bu fonksiyonlar saniyede düzinelerce kez çağrılır ve teşhis değeri yoktur. `_fn()` EKLEME:
+```
+t                    ← i18n çeviri (translateUI her çağrıda 50-70 kez tetikler)
+escapeHtml           ← XSS koruması, her render'da onlarca kez
+formatMoney          ← Para formatlama
+formatDate           ← Tarih formatlama (tüm varyantlar)
+formatDateShort
+formatDateStr
+formatDateStrDb
+getDaysUntil         ← Gün hesaplama
+getTodayStr          ← Bugünün tarihi
+getCurrencySymbol    ← Para birimi sembolü
+getCategoryLabel     ← Kategori etiketi
+getRecurrenceLabel   ← Tekrar etiketi
+getIntervalMonths
+getIntervalMonthsDb
+getPeriodPayStatus   ← Dönem ödeme durumu (her ödeme için çağrılır)
+getCurrentPeriodDate ← Dönem tarih hesaplama
+getPeriodsInMonth    ← Ay dönemleri
+enrichPaymentStatus  ← Ödeme zenginleştirme (cache güncellemede N kez)
+```
+> **Kural:** Bir fonksiyon her sayfa render'da 5+ kez çağrılıyorsa ve sadece veri dönüştürme/formatlama yapıyorsa → exclude listesine ekle. İş mantığı, navigasyon, veri yazma, API çağrısı, plugin kullanımı yapan fonksiyonlara **HER ZAMAN** `_fn()` ekle.
+
+#### ⚠️ YENİ FONKSİYON YAZARKEN ZORUNLU KURAL
+- **Her yeni fonksiyonun ilk satırına `_fn('fonksiyonAdi');` ekle** (exclude listesindekiler hariç)
+- Mevcut dosyaya fonksiyon eklerken de aynı kural geçerli
+- `_fn()` satırı fonksiyon gövdesinin İLK satırı olmalı (parametrelerden sonra, iş mantığından önce)
+- Örnek:
+```javascript
+function yeniOzellik() {
+  _fn('yeniOzellik');
+  // ... iş mantığı
+}
+async function veriKaydet(data) {
+  _fn('veriKaydet');
+  // ... iş mantığı
+}
+```
 
 **Uygulama:**
 
 **1) db.js'in EN BAŞINA (tüm kodlardan önce, Firebase config'den bile önce):**
 ```javascript
-// LOGGER — Ring Buffer (her zaman aktif, max 500 satir)
+// ========== LOGGER — Kalici Ring Buffer (her zaman aktif) ==========
 var _logBuffer = [];
-var _LOG_MAX = 500;
+var _LOG_MAX = 1000;
+var _LOG_STORAGE_KEY = 'PROJE_logBuffer';  // ← Projeye gore degistir (ornek: oh_logBuffer, ks_logBuffer)
+var _logDirty = false;
+var _logFlushTimer = null;
+
+// Onceki oturum loglarini yukle
+try {
+  var _saved = localStorage.getItem(_LOG_STORAGE_KEY);
+  if (_saved) _logBuffer = JSON.parse(_saved);
+} catch(e) {}
 
 function _logEkle(seviye, args) {
   var zaman = new Date().toISOString().substr(11, 12);
@@ -923,7 +979,20 @@ function _logEkle(seviye, args) {
   }
   _logBuffer.push(zaman + ' [' + seviye + '] ' + mesaj);
   if (_logBuffer.length > _LOG_MAX) _logBuffer.shift();
+  _logDirty = true;
 }
+
+function _fn(name) { _logEkle('FN', [name]); }
+
+function _logFlush() {
+  if (!_logDirty) return;
+  try { localStorage.setItem(_LOG_STORAGE_KEY, JSON.stringify(_logBuffer)); }
+  catch(e) {}
+  _logDirty = false;
+}
+
+// 5 saniyede bir localStorage'a yaz
+_logFlushTimer = setInterval(_logFlush, 5000);
 
 var _origLog = console.log;
 var _origWarn = console.warn;
@@ -934,10 +1003,28 @@ console.error = function() { _logEkle('ERR', arguments); _origError.apply(consol
 
 window.addEventListener('error', function(e) {
   _logEkle('ERR', ['UNCAUGHT: ' + (e.message || '') + ' @ ' + (e.filename || '') + ':' + (e.lineno || '')]);
+  _logFlush();
 });
 window.addEventListener('unhandledrejection', function(e) {
   _logEkle('ERR', ['UNHANDLED_PROMISE: ' + (e.reason ? (e.reason.message || e.reason) : 'unknown')]);
+  _logFlush();
 });
+
+// Uygulama arka plana alininca / kapatilinca aninda flush
+document.addEventListener('pause', function() {
+  _logEkle('LOG', ['APP_LIFECYCLE: pause (arka plana alindi)']);
+  _logFlush();
+}, false);
+document.addEventListener('resume', function() {
+  _logEkle('LOG', ['APP_LIFECYCLE: resume (on plana geldi)']);
+}, false);
+window.addEventListener('beforeunload', function() {
+  _logEkle('LOG', ['APP_LIFECYCLE: beforeunload']);
+  _logFlush();
+});
+
+console.log('APP_LIFECYCLE: db.js yuklendi (' + new Date().toISOString() + ')');
+// ========== LOGGER SONU ==========
 ```
 
 **2) db.js'in sonuna:**
@@ -963,9 +1050,9 @@ function hataRaporuOlustur() {
   satirlar.push('Online: ' + navigator.onLine);
   satirlar.push('');
   satirlar.push('--- UYGULAMA DURUMU ---');
-  satirlar.push('Firebase Ready: ' + firebaseReady);
-  satirlar.push('Kullanici: ' + (mevcutKullanici ? mevcutKullanici.email : 'YOK'));
-  satirlar.push('Son Sync: ' + (getSonSyncZamani() ? new Date(getSonSyncZamani()).toISOString() : 'HIC'));
+  // ↓ Projeye gore ozellestir (Firebase, cache, premium vb.)
+  satirlar.push('Firebase Ready: ' + (typeof firebaseReady !== 'undefined' ? firebaseReady : '?'));
+  satirlar.push('Kullanici: ' + (typeof mevcutKullanici !== 'undefined' && mevcutKullanici ? mevcutKullanici.email : 'YOK'));
   satirlar.push('');
   satirlar.push('--- LOGLAR (son ' + _logBuffer.length + ' satir) ---');
   for (var i = 0; i < _logBuffer.length; i++) {
@@ -1013,8 +1100,9 @@ function hataRaporuGonder() {
 set_bug_report: { tr: 'Hata Raporu Gönder', en: 'Send Bug Report' },
 ```
 
-> **Not:** `hataRaporuOlustur()` içindeki uygulama durumu bilgileri projeye göre özelleştirilmeli (cache isimleri, premium durumu vb.). Logger kısmı (`_logBuffer`, `_logEkle`, console intercept) tüm projelerde BİREBİR AYNI kalabilir.
+> **Not:** `_LOG_STORAGE_KEY` projeye göre değiştirilmeli (örnek: `oh_logBuffer`, `ks_logBuffer`). Logger altyapısı (`_logBuffer`, `_logEkle`, `_fn`, `_logFlush`, console intercept, lifecycle) tüm projelerde BİREBİR AYNI kalır. `hataRaporuOlustur()` içindeki uygulama durumu bilgileri projeye göre özelleştirilir.
 > **Plugin:** `cordova-plugin-x-socialsharing` ve `cordova-plugin-device` gerekli.
+> **Performans:** 1000 satırlık JSON localStorage yazma ~1-2ms. 5sn interval ile CPU etkisi ölçülemez düzeyde. `_fn()` çağrısı ~0.01ms. Exclude listesi sayesinde gereksiz noise önlenir.
 
 ---
 
@@ -1100,7 +1188,11 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] `res/icon.png` (512×512+), `resources/iconTemplate.png` (1024×1024), `resources/splashTemplate.png` (2732×2732) mevcut
 - [ ] Bildirim ödendi aksiyonu: `findPaymentByNotifId()` mevcut + `on('paid')` ve cold start'ta `notification.id`'den ters eşleme kullanılıyor (data'ya bağımlılık YOK!)
 - [ ] PowerShell scriptleri ASCII-only (Türkçe karakter yok!)
-- [ ] Logger: `_logBuffer` ring buffer db.js'in EN BAŞINDA (Firebase config'den önce)
+- [ ] Logger: Kalıcı ring buffer (1000 satır) db.js'in EN BAŞINDA (Firebase config'den önce)
+- [ ] Logger: `_fn()` fonksiyonu tanımlı + localStorage flush (5sn interval + pause/beforeunload)
+- [ ] Logger: `_LOG_STORAGE_KEY` projeye özel ayarlanmış (örn: `oh_logBuffer`)
+- [ ] Logger: Tüm fonksiyonlara `_fn('fonksiyonAdi')` eklenmiş (exclude listesindekiler HARİÇ!)
+- [ ] Logger: Exclude listesindeki yardımcı fonksiyonlarda (t, escapeHtml, formatMoney vb.) `_fn()` YOK
 - [ ] Logger: `hataRaporuGonder()` fonksiyonu db.js'in sonunda
 - [ ] Logger: Ayarlar sayfasında "🐛 Hata Raporu Gönder" butonu mevcut
 - [ ] Logger: i18n.js'de `set_bug_report` çevirisi mevcut
@@ -1121,7 +1213,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] voltbuilder.json mevcut
 - [ ] ZIP yapısı doğru (config.xml kökte)
 - [ ] Harici CDN bağımlılıkları lokal dosyalarla değiştirilmiş
-- [ ] Logger ring buffer + Hata Raporu Gönder butonu mevcut
+- [ ] Logger: Kalıcı ring buffer + `_fn()` izleme + Hata Raporu Gönder butonu mevcut
 - [ ] Sync: `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor + hata maskeleme kaldırılmış
 
 ### Google Play
@@ -1259,6 +1351,14 @@ Kullanıcı onaylarsa: Her madde akış sırasında fonksiyonel olarak kontrol e
 - Sadece istenen güncellemeyi yap
 - Geri kalan her şey AYNEN kalsın
 - Firebase ayarları, API anahtarları, credentials = DOKUNULMAZdır (özel istek olmadıkça)
+
+**3.1 LOGGER / `_fn()` KURALI (ZORUNLU)**
+- Yeni fonksiyon yazarken: fonksiyon gövdesinin İLK satırına `_fn('fonksiyonAdi');` ekle
+- Mevcut dosyaya fonksiyon eklerken de aynı kural geçerli
+- EXCLUDE listesindeki fonksiyonlara (t, escapeHtml, formatMoney, formatDate, formatDateShort, formatDateStr, formatDateStrDb, getDaysUntil, getTodayStr, getCurrencySymbol, getCategoryLabel, getRecurrenceLabel, getIntervalMonths, getIntervalMonthsDb, getPeriodPayStatus, getCurrentPeriodDate, getPeriodsInMonth, enrichPaymentStatus) `_fn()` EKLEME
+- Proje yeni oluşturuluyorsa: db.js'in EN BAŞINA kalıcı logger altyapısını koy (Bölüm 9.27)
+- Logger altyapı fonksiyonlarına (`_logEkle`, `_fn`, `_logFlush`) `_fn()` EKLEME (sonsuz döngü olur)
+- `hataRaporuOlustur` ve `hataRaporuGonder` fonksiyonlarına da `_fn()` EKLEME (rapor sırasında log kirlenir)
 
 **4.1. WEB'li (Güncel İnternetli) Derin Analiz İstenirse**
 - ZORUNLU 4 DÖNGÜ: analiz → WEB ARAŞTIR (ATLAMAYI DENEME) → çözüm bul → tekrar
