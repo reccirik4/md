@@ -1104,6 +1104,26 @@ set_bug_report: { tr: 'Hata Raporu Gönder', en: 'Send Bug Report' },
 > **Plugin:** `cordova-plugin-x-socialsharing` ve `cordova-plugin-device` gerekli.
 > **Performans:** 1000 satırlık JSON localStorage yazma ~1-2ms. 5sn interval ile CPU etkisi ölçülemez düzeyde. `_fn()` çağrısı ~0.01ms. Exclude listesi sayesinde gereksiz noise önlenir.
 
+### 9.28 ❌ Firebase Sync Timeout — `syncWithFirebase` finally'deki `goOffline()` WebSocket'i Öldürüyor
+**Belirti:** `syncWithFirebase` her çağrıda 30sn timeout'a düşüyor (`FIREBASE_TIMEOUT`). `getIdToken(true)` başarılı (HTTPS), ama `.once('value')` (WebSocket) hiç dönmüyor. `Firebase Bagli: false`, `Sync Devam: true` takılı kalıyor.
+**Sebep:** `syncWithFirebase` fonksiyonunun `finally` bloğunda `fbDb.goOffline()` çağrılıyordu. Her sync sonrası WebSocket bağlantısı kesiliyordu. Sonraki sync'te `goOnline()` + 800ms bekleme yapılsa da Firebase SDK mobil ortamda (özellikle arka plan/ön plan geçişlerinden sonra) WebSocket'i "forever dead socket" durumuna düşürebiliyor — `goOnline()` çağrılsa bile SDK dahili olarak bağlantıyı kuramıyor, `.once('value')` sonsuza dek bekliyor.
+**Çözüm:** `finally` bloğundaki `goOffline()` kaldırıldı. Firebase SDK zaten 60sn inaktiviteden sonra bağlantıyı otomatik keser:
+```javascript
+// ❌ YANLIŞ — WebSocket'i öldürüyor, sonraki sync bağlanamıyor
+} finally {
+    try { fbDb.goOffline(); } catch(ignore) {}
+    _syncDevam = false;
+}
+
+// ✅ DOĞRU — Bağlantıyı açık bırak, SDK 60sn sonra otomatik keser
+} finally {
+    _syncDevam = false;
+}
+```
+> **Not:** `hesapSilKalici()` fonksiyonundaki `goOffline()` kalmalı — hesap silme sonrası bağlantı kesilmeli.
+> **Not:** Firebase init sırasındaki ilk `goOffline()` (local-first mimari) de kalmalı — uygulama başlangıcında offline modda başlamak doğru davranış.
+> **İlişkili:** Bu sorun 9.26'daki `getIdToken(true)` düzeltmesiyle birlikte çalışır. Token yenileme + goOffline kaldırma birlikte tam çözümü oluşturur.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -1197,6 +1217,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Logger: Ayarlar sayfasında "🐛 Hata Raporu Gönder" butonu mevcut
 - [ ] Logger: i18n.js'de `set_bug_report` çevirisi mevcut
 - [ ] Sync: `syncWithFirebase()` içinde `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor
+- [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK (WebSocket'i öldürür!)
 - [ ] Sync: catch bloğunda gerçek hata loglanıyor (maskeleme yok!)
 - [ ] `cordova build android` → BUILD SUCCESSFUL
 
@@ -1215,6 +1236,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Harici CDN bağımlılıkları lokal dosyalarla değiştirilmiş
 - [ ] Logger: Kalıcı ring buffer + `_fn()` izleme + Hata Raporu Gönder butonu mevcut
 - [ ] Sync: `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor + hata maskeleme kaldırılmış
+- [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK
 
 ### Google Play
 - [ ] Keystore oluşturuldu + yedeklendi
