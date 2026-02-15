@@ -1183,6 +1183,52 @@ setTimeout(function() { arkaPlanaGonder(); }, 3000);
 > **Kural:** Projede hiçbir yerde `navigator.app.exitApp()` KALMAMALI. Tüm çıkış noktaları `arkaPlanaGonder()` kullanmalı.
 > **Not:** `cikisYap()` (auth.signOut) dokunulmaz — o sadece oturum kapatır, uygulama kapatmaz.
 
+### 9.30 ❌ `hideLoading is not defined` — cikisYapildi() app.js Yüklenmeden Çağrılıyor
+**Belirti:** Uygulama açılışında console'da `UNHANDLED_PROMISE: hideLoading is not defined`. Bir kez oluyor, uygulama çalışmaya devam ediyor.
+**Sebep:** Script yükleme sırası: `db.js` → ... → `app.js`. db.js'de `onAuthStateChanged` senkron ateşlenir (kullanıcı yok) → `cikisYapildi()` → `hideLoading()` çağrılır. Ama `hideLoading` app.js'de tanımlı ve app.js henüz yüklenmemiş.
+**Çözüm:** `cikisYapildi()` içindeki `hideLoading()` çağrısını `typeof` guard ile sar:
+```javascript
+// ❌ YANLIŞ — app.js yüklenmeden çağrılırsa hata verir
+hideLoading();
+
+// ✅ DOĞRU — app.js henüz yüklenmemişse sessizce atla
+if (typeof hideLoading === 'function') hideLoading();
+```
+> **Kural:** db.js'den app.js'deki fonksiyonları çağırırken HER ZAMAN `typeof` guard kullan. Projedeki diğer çapraz-dosya çağrıları (`showToast`, `refreshCurrentPage` vb.) zaten bu pattern'ı kullanıyor.
+
+### 9.31 ❌ Bildirimden "Ödendi" — Ödeme Cache/Firebase'de Bulunamıyor (Stale Notification)
+**Belirti:** Bildirimden "Ödendi İşaretle" tıklanıyor. Toast: "Ödeme bulunamadı". Log: `Odeme bulunamadi: local_xxx`.
+**Sebep:** `on('paid')` handler'da `paymentId` bildirim data'sından alınıyor ve `paymentsCache.find()` ile aranıyor. Ödeme silinmiş (veya isActive=false yapılmış) ama bildirim hâlâ zamanlanmış durumda. Cache'de ve Firebase'de ödeme bulunamıyor.
+**Çözüm (2 katmanlı):**
+1. `paymentId` ile bulunamazsa `findPaymentByNotifId(notification.id)` ile ters eşleme dene
+2. Hiç bulunamazsa stale bildirimi iptal et ve kullanıcıya bilgi ver
+
+```javascript
+// Cache'de yoksa Firebase'den dene (mevcut kod)
+if (!payment && fbDb && mevcutKullanici) { ... }
+
+// ✅ YENİ: paymentId ile bulunamadıysa notifId ile ters eşleme dene
+if (!payment && notification && notification.id) {
+    var foundByNotifId = findPaymentByNotifId(notification.id);
+    if (foundByNotifId) {
+        payment = foundByNotifId;
+        paymentId = foundByNotifId.id;
+        console.log('on(paid): paymentId ile bulunamadi, notifId ile bulundu:', paymentId);
+    }
+}
+
+if (!payment) {
+    console.warn('Odeme bulunamadi (silinmis olabilir): ' + paymentId);
+    if (typeof showToast === 'function') showToast(typeof t === 'function' ? t('pay_not_found') : 'Odeme bulunamadi');
+    // Stale bildirimi iptal et
+    if (notification && notification.id) {
+        try { cordova.plugins.notification.local.cancel(notification.id); } catch(e) {}
+    }
+    return;
+}
+```
+> **i18n:** `pay_not_found` anahtarı i18n.js'e eklenmeli: `{ tr: 'Ödeme bulunamadı', en: 'Payment not found' }`
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -1281,6 +1327,9 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
 - [ ] moveTaskToBack: `arkaPlanaGonder()` fonksiyonu app.js'de tanımlı
 - [ ] moveTaskToBack: Projede `navigator.app.exitApp()` KALMADI — tümü `arkaPlanaGonder()` ile değiştirildi
+- [ ] db.js: `cikisYapildi()` içinde `hideLoading()` çağrısı `typeof` guard ile sarılı
+- [ ] notifications.js: `on('paid')` handler'da ödeme bulunamazsa `findPaymentByNotifId` fallback + stale bildirim iptal
+- [ ] i18n.js: `pay_not_found` çevirisi mevcut
 - [ ] `cordova build android` → BUILD SUCCESSFUL
 
 ### VoltBuilder
@@ -1301,6 +1350,9 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK
 - [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
 - [ ] moveTaskToBack: Projede `navigator.app.exitApp()` KALMADI — tümü `arkaPlanaGonder()` ile değiştirildi
+- [ ] db.js: `cikisYapildi()` içinde `hideLoading()` çağrısı `typeof` guard ile sarılı
+- [ ] notifications.js: `on('paid')` handler'da ödeme bulunamazsa `findPaymentByNotifId` fallback + stale bildirim iptal
+- [ ] i18n.js: `pay_not_found` çevirisi mevcut
 
 ### Google Play
 - [ ] Keystore oluşturuldu + yedeklendi
