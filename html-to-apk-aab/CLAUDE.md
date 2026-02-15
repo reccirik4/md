@@ -1083,6 +1083,7 @@ Kullanıcı onaylarsa: Her madde akış sırasında fonksiyonel olarak kontrol e
 - Güncellemeyi planla
 - Çalışacağını kontrol et
 - Güncellenecek dosyaların sadece isimlerini listele.
+- DOSYALARI TOPLU DEĞİL, TEK TEK GÜNCELLE: Birden fazla dosya güncellenecekse, her dosyayı ayrı ayrı oluştur. Bir sonraki dosyaya geçmeden önce "Sıradaki dosya: [dosya adı]. Güncelleyeyim mi?" diye onay al. Onay gelmeden sonraki dosyaya geçme.
 - DOSYANIN TAMAMINI EKSİKSİZ YAZ (baştan sona tam kod)
 - SONRASINDA KONTROL ET: güncelleme dışındaki her şey AYNEN mi
 - Kontrol: değişken isimleri, fonksiyon isimleri, Firebase ayarları, API anahtarları vb. değişmemiş mi
