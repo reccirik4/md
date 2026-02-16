@@ -1282,6 +1282,19 @@ Unknown property: iOSForeground
 
 > **Etki:** Console'daki 10-15 deprecated uyarı satırı tamamen temizlenir. Fonksiyonel değişiklik yok — bildirimler aynı şekilde çalışır.
 
+### 9.34 ❌ `getSetting()` Promise Dönüyor Ama `await` Olmadan Kullanılıyor
+**Belirti:** Yaklaşan gün sayısı ayarı 30 seçilse bile dashboard her zaman 7 gün kullanıyor. Ayarlarda seçili değer boş/yanlış görünüyor.
+**Sebep:** `getSetting()` fonksiyonu **Promise** döner. `parseInt(getSetting('upcomingDays'))` → `parseInt(Promise)` = `NaN` → `NaN || 7` = **her zaman 7**. Benzer şekilde `String(getSetting('upcomingDays'))` → `"[object Promise]"` → select'te eşleşen option yok → seçim boş görünür.
+**Çözüm:** `getSetting()` çağrıları HER ZAMAN `await` ile kullanılmalı:
+```javascript
+// ❌ YANLIŞ — parseInt(Promise) = NaN, her zaman default'a düşer
+var upcomingDays = parseInt(getSetting('upcomingDays')) || 7;
+
+// ✅ DOĞRU
+var upcomingDays = parseInt(await getSetting('upcomingDays')) || 7;
+```
+> **Kural:** `getSetting()` dönen değeri doğrudan kullanan HER YERDE `await` olmalı. `getSetting` senkron görünse de Promise wrapper döner. Yeni kod yazarken veya mevcut kodu değiştirirken bu kontrol edilmeli.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -1366,6 +1379,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] `res/icon.png` (512×512+), `resources/iconTemplate.png` (1024×1024), `resources/splashTemplate.png` (2732×2732) mevcut
 - [ ] Bildirim ödendi aksiyonu: `findPaymentByNotifId()` mevcut + `on('paid')` ve cold start'ta `notification.id`'den ters eşleme kullanılıyor (data'ya bağımlılık YOK!)
 - [ ] PowerShell scriptleri ASCII-only (Türkçe karakter yok!)
+- [ ] `getSetting()` çağrıları HER YERDE `await` ile kullanılıyor (Promise döner — `await` olmadan NaN/[object Promise] olur!)
 - [ ] Logger: Kalıcı ring buffer (1000 satır) db.js'in EN BAŞINDA (Firebase config'den önce)
 - [ ] Logger: `_fn()` fonksiyonu tanımlı + localStorage flush (5sn interval + pause/beforeunload)
 - [ ] Logger: `_LOG_STORAGE_KEY` projeye özel ayarlanmış (örn: `oh_logBuffer`)
@@ -1410,6 +1424,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] i18n.js: `pay_not_found` çevirisi mevcut
 - [ ] db.js: `syncWithFirebase()` sonunda `idMap` doluysa eski `local_` ID'li bildirimleri iptal + yeni Firebase ID ile yeniden zamanla
 - [ ] notifications.js: `schedule()` bloklarında deprecated property YOK (`foreground`, `vibrate`, `smallIcon`, `priority` → yeni adlarla değiştirilmiş)
+- [ ] `getSetting()` çağrıları HER YERDE `await` ile kullanılıyor (Promise döner — `await` olmadan NaN/[object Promise] olur!)
 
 ### Google Play
 - [ ] Keystore oluşturuldu + yedeklendi
