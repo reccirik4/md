@@ -1467,6 +1467,99 @@ if (editId) {
 > **Kök kural:** `update` fonksiyonlarında `if (!bulundu) array.push(item)` KULLANMA — bu kopya oluşturur. ID bulunamazsa `createdAt` fallback ile ara, o da bulamazsa sessizce logla ve push YAPMA.
 > **Not:** Bu sorun sadece notes değil, `local_` → Firebase ID dönüşümü yapan TÜM koleksiyonlarda (payments, paidInstances vb.) olabilir. Her `update` fonksiyonunu kontrol et.
 
+### 9.36 ❌ İnternet Kesilip Geri Gelince Sync Çalışmıyor — WebSocket Bağlanamıyor (REST API Fallback)
+**Belirti:** İnternet kapatılıp geri açıldıktan sonra `syncWithFirebase` her çağrıda 20sn TIMEOUT'a düşüyor. Token yenilenebiliyor (HTTPS çalışıyor) ama `.once('value')` (WebSocket) hiç dönmüyor. Task kill ile kapatıp açınca da aynı sorun devam ediyor (cold start bile çözmüyor).
+**Sebep:** Firebase JS SDK (compat) WebSocket bağlantısı internet kesintisinden sonra recover edemiyor. Bu bilinen bir sorun (GitHub #7670, #8718, #594). `goOffline()/goOnline()` reset döngüleri SDK'nın dahili exponential backoff retry mekanizmasını bozuyor. Token yenileme HTTPS ile çalışıyor ama WebSocket ayrı bir kanal ve bağımsız olarak bozuluyor.
+**Denenen ve işe yaramayan çözümler:**
+- `syncWithFirebase` finally bloğundaki `goOffline()` kaldırma → kısmen yardımcı ama WebSocket hâlâ recover edemiyor
+- `pauseSync()` içindeki `goOffline()` kaldırma → race condition düzeldi ama WebSocket sorunu devam
+- `goOffline()/goOnline()` reset döngülerini tamamen kaldırma → SDK kendi reconnect'ini yapamıyor
+- `.info/connected` ile bağlantı doğrulama → WebSocket bağlanamayınca hiç `true` dönmüyor
+
+**Çözüm — Firebase REST API Fallback (HTTPS):**
+Firebase Realtime Database iki farklı kanalla erişilebilir:
+1. **WebSocket (SDK)** — `once('value')`, `ref.set()` → normal çalışırken hızlı
+2. **REST API (HTTPS)** — `https://DB_URL/path.json?auth=TOKEN` ile GET/PUT/POST → WebSocket bozulunca fallback
+
+Sync akışı:
+1. `goOnline()` → `_waitForConnection(5sn)` → bağlandıysa **WebSocket** ile devam
+2. 5sn bağlanamadıysa → `getIdToken()` ile auth token al → **REST API** ile `fetch()` (HTTPS)
+3. REST API okuma: `GET /users/UID/payments.json?auth=TOKEN`
+4. REST API yazma: `PUT /users/UID/payments.json?auth=TOKEN` + body
+5. REST API push (local_ ID): `POST /users/UID/payments.json?auth=TOKEN` → `{ name: "-OlXq9..." }` döner
+
+**db.js — REST API helper fonksiyonları (`_waitForConnection`'dan sonra):**
+```javascript
+var _FIREBASE_DB_URL = firebaseConfig.databaseURL;
+
+async function _restApiRead(path, token) {
+  var url = _FIREBASE_DB_URL + '/' + path + '.json?auth=' + token;
+  var resp = await fetch(url, { method: 'GET' });
+  if (!resp.ok) throw new Error('REST_READ_FAILED: ' + resp.status);
+  return await resp.json();
+}
+
+async function _restApiWrite(path, data, token) {
+  var url = _FIREBASE_DB_URL + '/' + path + '.json?auth=' + token;
+  var resp = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  if (!resp.ok) throw new Error('REST_WRITE_FAILED: ' + resp.status);
+  return await resp.json();
+}
+
+async function _restApiPush(path, data, token) {
+  var url = _FIREBASE_DB_URL + '/' + path + '.json?auth=' + token;
+  var resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  if (!resp.ok) throw new Error('REST_PUSH_FAILED: ' + resp.status);
+  var result = await resp.json();
+  return result.name; // Firebase push key
+}
+
+async function _restApiDelete(path, token) {
+  var url = _FIREBASE_DB_URL + '/' + path + '.json?auth=' + token;
+  var resp = await fetch(url, { method: 'DELETE' });
+  if (!resp.ok) throw new Error('REST_DELETE_FAILED: ' + resp.status);
+}
+```
+
+**syncWithFirebase — WebSocket/REST mod seçimi:**
+```javascript
+var _useRest = false;
+var _authToken = null;
+
+// WebSocket dene
+fbDb.goOnline();
+var baglandi = await _waitForConnection(5000);
+if (baglandi) {
+  console.log('syncWithFirebase: Firebase BAGLI (WebSocket)');
+} else {
+  console.warn('syncWithFirebase: WebSocket 5sn baglanamadi, REST API fallback...');
+  _useRest = true;
+  _authToken = await mevcutKullanici.getIdToken(false);
+}
+
+// Okuma
+if (_useRest) {
+  fbPayments = (await _restApiRead('users/' + uid + '/payments', _authToken)) || {};
+  // ... diğer koleksiyonlar
+} else {
+  var fbPaySnap = await _firebaseTimeout(fbDb.ref('users/' + uid + '/payments').once('value'), 20000);
+  // ... diğer koleksiyonlar
+}
+
+// Yazma
+if (_useRest) {
+  await _restApiWrite('users/' + uid + '/payments', fbPayObj, _authToken);
+  // ... diğer koleksiyonlar
+} else {
+  await fbDb.ref('users/' + uid + '/payments').set(fbPayObj);
+  // ... diğer koleksiyonlar
+}
+```
+> **Log:** Başarılı sync'te `syncWithFirebase BASARILI (REST)` veya `(WebSocket)` yazılır.
+> **Performans:** REST API ~100-300ms/istek (HTTPS). WebSocket'e göre biraz yavaş ama TIMEOUT'tan (20sn × 3 retry = 60sn) çok daha iyi.
+> **CSP:** `connect-src` içinde `https://*.firebasedatabase.app` zaten mevcut — REST API aynı domain'i kullanır.
+> **İlişkili:** 9.26 (getIdToken), 9.28 (goOffline kaldırma), 9.19 (CSP) ile birlikte çalışır.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -1564,6 +1657,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK (WebSocket'i öldürür!)
 - [ ] Sync: `pauseSync()` içinde `goOffline()` YOK (async sync'in WebSocket'ini öldürür!)
 - [ ] Sync: `_waitForConnection()` helper mevcut — `.info/connected` ile gerçek bağlantı doğrulama (sabit bekleme DEĞİL!)
+- [ ] Sync: REST API fallback mevcut — WebSocket bağlanamadığında `_restApiRead/Write/Push` ile HTTPS üzerinden sync
 - [ ] Sync: catch bloğunda gerçek hata loglanıyor (maskeleme yok!)
 - [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
 - [ ] moveTaskToBack: `arkaPlanaGonder()` fonksiyonu app.js'de tanımlı
@@ -1594,6 +1688,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK
 - [ ] Sync: `pauseSync()` içinde `goOffline()` YOK (async sync'in WebSocket'ini öldürür!)
 - [ ] Sync: `_waitForConnection()` helper mevcut — `.info/connected` ile gerçek bağlantı doğrulama
+- [ ] Sync: REST API fallback mevcut — WebSocket bağlanamadığında HTTPS ile sync
 - [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
 - [ ] moveTaskToBack: Projede `navigator.app.exitApp()` KALMADI — tümü `arkaPlanaGonder()` ile değiştirildi
 - [ ] db.js: `cikisYapildi()` içinde `hideLoading()` çağrısı `typeof` guard ile sarılı
