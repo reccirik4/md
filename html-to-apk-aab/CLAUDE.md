@@ -1105,25 +1105,106 @@ set_bug_report: { tr: 'Hata Raporu Gönder', en: 'Send Bug Report' },
 > **Plugin:** `cordova-plugin-x-socialsharing` ve `cordova-plugin-device` gerekli.
 > **Performans:** 1000 satırlık JSON localStorage yazma ~1-2ms. 5sn interval ile CPU etkisi ölçülemez düzeyde. `_fn()` çağrısı ~0.01ms. Exclude listesi sayesinde gereksiz noise önlenir.
 
-### 9.28 ❌ Firebase Sync Timeout — `syncWithFirebase` finally'deki `goOffline()` WebSocket'i Öldürüyor
-**Belirti:** `syncWithFirebase` her çağrıda 30sn timeout'a düşüyor (`FIREBASE_TIMEOUT`). `getIdToken(true)` başarılı (HTTPS), ama `.once('value')` (WebSocket) hiç dönmüyor. `Firebase Bagli: false`, `Sync Devam: true` takılı kalıyor.
-**Sebep:** `syncWithFirebase` fonksiyonunun `finally` bloğunda `fbDb.goOffline()` çağrılıyordu. Her sync sonrası WebSocket bağlantısı kesiliyordu. Sonraki sync'te `goOnline()` + 800ms bekleme yapılsa da Firebase SDK mobil ortamda (özellikle arka plan/ön plan geçişlerinden sonra) WebSocket'i "forever dead socket" durumuna düşürebiliyor — `goOnline()` çağrılsa bile SDK dahili olarak bağlantıyı kuramıyor, `.once('value')` sonsuza dek bekliyor.
-**Çözüm:** `finally` bloğundaki `goOffline()` kaldırıldı. Firebase SDK zaten 60sn inaktiviteden sonra bağlantıyı otomatik keser:
+### 9.28 ❌ Firebase Sync Timeout — `goOffline()` WebSocket'i Öldürüyor (finally + pauseSync)
+**Belirti:** Task kill ile kapatıp açınca `syncWithFirebase` her çağrıda 20sn timeout'a düşüyor (`FIREBASE_TIMEOUT`). `getIdToken(true)` başarılı (HTTPS), ama `.once('value')` (WebSocket) hiç dönmüyor. `Firebase Bagli: false`, `Sync Devam: true` takılı kalıyor.
+**Sebep (2 ayrı noktada aynı hata):**
+1. **`syncWithFirebase` finally bloğu:** Her sync sonrası `goOffline()` çağrılıyordu → WebSocket kesiliyordu → sonraki sync'te "forever dead socket"
+2. **`pauseSync()` fonksiyonu:** `syncWithFirebase()` async başlatılıp **hemen ardından** `goOffline()` çağrılıyordu. `syncWithFirebase` henüz token bile yenilemeden WebSocket kesiliyordu. Sonraki `goOnline()` bozuk state'de kalıyordu. Task kill bu durumda gelince yeniden açılışta SDK recover edemiyordu.
+
+**Race condition detayı (pauseSync):**
+```
+pauseSync() çağrılır
+  → syncWithFirebase() başlatılır (async, Promise döner)
+  → goOffline() HEMEN çalışır (senkron!) → WebSocket kesilir
+  → syncWithFirebase içinde goOnline() çağrılır → yeni WebSocket açılmaya çalışılır
+  → TASK KILL → OS her şeyi öldürür
+  → Yeniden açılışta: Firebase SDK'nın dahili WebSocket state'i bozuk
+```
+
+**Çözüm (3 adım):**
+
+**Adım 1 — finally bloğundaki `goOffline()` kaldırıldı:**
 ```javascript
-// ❌ YANLIŞ — WebSocket'i öldürüyor, sonraki sync bağlanamıyor
+// ❌ YANLIŞ — WebSocket'i öldürüyor
 } finally {
     try { fbDb.goOffline(); } catch(ignore) {}
     _syncDevam = false;
 }
 
-// ✅ DOĞRU — Bağlantıyı açık bırak, SDK 60sn sonra otomatik keser
+// ✅ DOĞRU — SDK 60sn sonra otomatik keser
 } finally {
     _syncDevam = false;
 }
 ```
-> **Not:** `hesapSilKalici()` fonksiyonundaki `goOffline()` kalmalı — hesap silme sonrası bağlantı kesilmeli.
-> **Not:** Firebase init sırasındaki ilk `goOffline()` (local-first mimari) de kalmalı — uygulama başlangıcında offline modda başlamak doğru davranış.
-> **İlişkili:** Bu sorun 9.26'daki `getIdToken(true)` düzeltmesiyle birlikte çalışır. Token yenileme + goOffline kaldırma birlikte tam çözümü oluşturur.
+
+**Adım 2 — `pauseSync()`teki `goOffline()` kaldırıldı:**
+```javascript
+// ❌ YANLIŞ — async sync başlatıp hemen WebSocket'i kesiyor
+function pauseSync() {
+  if (mevcutKullanici) {
+    syncWithFirebase().catch(function() {});
+    if (fbDb) { fbDb.goOffline(); }  // ← sync'in WebSocket'ini öldürüyor!
+  }
+}
+
+// ✅ DOĞRU — goOffline yok, SDK kendi yönetir
+function pauseSync() {
+  _fn('pauseSync');
+  if (mevcutKullanici) {
+    syncWithFirebase().catch(function() {});
+    // goOffline() KALDIRILDI — aktif sync'in WebSocket'ini öldürüyordu
+    // Firebase SDK 60sn inaktiviteden sonra bağlantıyı otomatik keser
+    console.log('pauseSync: sync tetiklendi (goOffline yok)');
+  }
+}
+```
+
+**Adım 3 — Sabit 2.5sn bekleme yerine `.info/connected` ile gerçek bağlantı doğrulama:**
+```javascript
+// ❌ YANLIŞ — 2.5sn bekleme, bağlantı kuruldu mu bilinmiyor
+fbDb.goOnline();
+await new Promise(function(r) { setTimeout(r, 2500); });
+
+// ✅ DOĞRU — .info/connected ile gerçek doğrulama
+function _waitForConnection(maxMs) {
+  return new Promise(function(resolve) {
+    if (!fbDb) { resolve(false); return; }
+    var ref = fbDb.ref('.info/connected');
+    var resolved = false;
+    var timer = setTimeout(function() {
+      if (!resolved) { resolved = true; ref.off(); resolve(false); }
+    }, maxMs);
+    ref.on('value', function(snap) {
+      if (snap.val() === true && !resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        ref.off();
+        resolve(true);
+      }
+    });
+  });
+}
+
+// syncWithFirebase içinde:
+fbDb.goOnline();
+var baglandi = await _waitForConnection(8000);
+if (!baglandi) {
+  // Bağlanamadıysa sıfırla ve tekrar dene
+  fbDb.goOffline();
+  await new Promise(function(r) { setTimeout(r, 500); });
+  fbDb.goOnline();
+  baglandi = await _waitForConnection(5000);
+}
+```
+
+> **Doğru `goOffline()` kullanım yerleri (KALDIRILMAMALI):**
+> - Firebase init (satır ~151) — local-first, başlangıçta offline ✅
+> - `cikisYap()` — oturum kapatma ✅
+> - `hesapSilKalici()` — hesap silme ✅
+> - `syncWithFirebase` retry reset — bağlantı kurulamadığında kasıtlı sıfırlama ✅
+>
+> **Endüstri standardı:** Firebase resmi dokümantasyonu ve Firebase ekibinden Kato: "Genel kural olarak bağlantıyı kendiniz yönetmenize gerek yok, Firebase kendi ilgilenir." `goOffline()` sadece bilinçli bağlantı kesme noktalarında (çıkış, hesap silme) kullanılmalı. Sync döngülerinde ve pause handler'larda KULLANILMAMALI.
+> **İlişkili:** 9.26'daki `getIdToken(true)` düzeltmesiyle birlikte çalışır. Token yenileme + goOffline kaldırma + .info/connected doğrulama birlikte tam çözümü oluşturur.
 
 ### 9.29 ✅ exitApp() Yerine moveTaskToBack — Arka Plana Gönderme (TÜM UYGULAMALARDA ZORUNLU)
 
@@ -1481,6 +1562,8 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Logger: i18n.js'de `set_bug_report` çevirisi mevcut
 - [ ] Sync: `syncWithFirebase()` içinde `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor
 - [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK (WebSocket'i öldürür!)
+- [ ] Sync: `pauseSync()` içinde `goOffline()` YOK (async sync'in WebSocket'ini öldürür!)
+- [ ] Sync: `_waitForConnection()` helper mevcut — `.info/connected` ile gerçek bağlantı doğrulama (sabit bekleme DEĞİL!)
 - [ ] Sync: catch bloğunda gerçek hata loglanıyor (maskeleme yok!)
 - [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
 - [ ] moveTaskToBack: `arkaPlanaGonder()` fonksiyonu app.js'de tanımlı
@@ -1509,6 +1592,8 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] Logger: Kalıcı ring buffer + `_fn()` izleme + Hata Raporu Gönder butonu mevcut
 - [ ] Sync: `getIdToken(true)` goOnline'dan ÖNCE çağrılıyor + hata maskeleme kaldırılmış
 - [ ] Sync: `syncWithFirebase()` finally bloğunda `goOffline()` YOK
+- [ ] Sync: `pauseSync()` içinde `goOffline()` YOK (async sync'in WebSocket'ini öldürür!)
+- [ ] Sync: `_waitForConnection()` helper mevcut — `.info/connected` ile gerçek bağlantı doğrulama
 - [ ] moveTaskToBack: `cordova-android-movetasktoback` plugin config.xml'de mevcut
 - [ ] moveTaskToBack: Projede `navigator.app.exitApp()` KALMADI — tümü `arkaPlanaGonder()` ile değiştirildi
 - [ ] db.js: `cikisYapildi()` içinde `hideLoading()` çağrısı `typeof` guard ile sarılı
