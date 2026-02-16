@@ -1570,6 +1570,14 @@ Kullanıcı onaylarsa: Her madde akış sırasında fonksiyonel olarak kontrol e
 - Logger altyapı fonksiyonlarına (`_logEkle`, `_fn`, `_logFlush`) `_fn()` EKLEME (sonsuz döngü olur)
 - `hataRaporuOlustur` ve `hataRaporuGonder` fonksiyonlarına da `_fn()` EKLEME (rapor sırasında log kirlenir)
 
+**4.0. Normal İstek (Derin Analiz Denmediyse)**
+- "Derin analiz" ifadesi YOKSA bu akisi uygula:
+- **1. dongu (websiz):** Konuyu analiz et → cozum tasarla
+- **2. dongu (webli):** Web arastirmasi yap → tasarimi dogrula/guncelle
+- Sonucu onaya sun
+- DOSYAYA DOKUNMA — sadece ne yapilacagini soyle
+- "Uygulayayim mi?" diye SOR
+
 **4.1. WEB'li (Güncel İnternetli) Derin Analiz İstenirse**
 - ZORUNLU 4 DÖNGÜ: analiz → WEB ARAŞTIR (ATLAMAYI DENEME) → çözüm bul → tekrar
 - Her döngüde web_search KULLAN; atlama = kural ihlali
