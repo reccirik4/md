@@ -1295,6 +1295,97 @@ var upcomingDays = parseInt(await getSetting('upcomingDays')) || 7;
 ```
 > **Kural:** `getSetting()` dönen değeri doğrudan kullanan HER YERDE `await` olmalı. `getSetting` senkron görünse de Promise wrapper döner. Yeni kod yazarken veya mevcut kodu değiştirirken bu kontrol edilmeli.
 
+### 9.35 ❌ Not/Kayıt Düzenlenince Kopya Oluşuyor — `local_` → Firebase ID Dönüşümü Race Condition
+**Belirti:** Bir notu (veya kaydı) düzenleyip kaydedince orijinal not duruyor, bir de kopyası oluşuyor. Her düzenlemede yeni kopya ekleniyor.
+**Sebep:** `updateNote()` (veya benzer update fonksiyonu) içinde `if (!bulundu) rawArray.push(item)` satırı var. Akış:
+1. Not eklenir → `local_xxx` ID → DOM'a render edilir
+2. 2sn sonra `debouncedSync()` → `local_xxx` → Firebase push key `-OlXxx` olur → localStorage güncellenir
+3. Ama DOM yeniden render edilmez — düzenle butonu hâlâ `local_xxx` ID'sini tutuyor
+4. Kullanıcı "Düzenle" tıklar → form'daki hidden input `local_xxx` (eski ID)
+5. Kaydet → `update({id: 'local_xxx', ...})` → localStorage'da artık `-OlXxx` var → `local_xxx` BULUNAMAZ
+6. `if (!bulundu) rawArray.push(item)` → **KOPYA OLUŞUR!**
+7. Sonraki sync'te `local_xxx` tekrar Firebase'e push edilir → 2 ayrı kayıt
+
+**Çözüm (2 katmanlı — update fonksiyonu + save fonksiyonu):**
+
+**1) `updateNote()` / `updateItem()` — ID bulunamazsa `createdAt` ile eşleştir, push YAPMA:**
+```javascript
+async function updateNote(note) {
+  _fn('updateNote');
+  if (!note || !note.id) return;
+  if (!mevcutKullanici) return;
+
+  note.ts = Date.now();
+
+  var rawNotes = lokalVeriOku('oh_notes') || [];
+  var bulundu = false;
+  for (var i = 0; i < rawNotes.length; i++) {
+    if (rawNotes[i].id === note.id) {
+      rawNotes[i] = Object.assign({}, note);
+      bulundu = true;
+      break;
+    }
+  }
+
+  // local_ ID sync sirasinda Firebase ID'ye donusmus olabilir — createdAt ile eslestir
+  if (!bulundu && note.createdAt) {
+    for (var j = 0; j < rawNotes.length; j++) {
+      if (rawNotes[j].createdAt === note.createdAt && !rawNotes[j]._deleted) {
+        console.log('updateNote: ID degismis (' + note.id + ' -> ' + rawNotes[j].id + '), createdAt ile eslestirildi');
+        note.id = rawNotes[j].id;
+        rawNotes[j] = Object.assign({}, note);
+        bulundu = true;
+        break;
+      }
+    }
+  }
+
+  if (!bulundu) {
+    console.warn('updateNote: Not bulunamadi, kopya olusturulmadi. ID:', note.id);
+  }
+
+  lokalVeriYaz('oh_notes', rawNotes);
+  notesCacheGuncelle();
+  _degisiklikVar = true;
+  debouncedSync();
+}
+```
+
+**2) `saveNote()` / `saveItem()` — kaydetmeden önce ID dönüşmüşse güncel ID'yi bul:**
+```javascript
+// Global değişken (app.js başına):
+var _editingNoteCreatedAt = null;
+
+// showEditNoteForm() — form açılırken createdAt kaydet:
+_editingNoteCreatedAt = note.createdAt || null;
+
+// showAddNoteForm() — sıfırla:
+_editingNoteCreatedAt = null;
+
+// saveNote() — editId cache'te yoksa createdAt ile eşleştir:
+if (editId) {
+    noteObj.id = editId;
+    var existing = getNote(editId);
+
+    if (!existing && _editingNoteCreatedAt) {
+      for (var ni = 0; ni < notesCache.length; ni++) {
+        if (notesCache[ni].createdAt === _editingNoteCreatedAt && !notesCache[ni]._deleted) {
+          existing = notesCache[ni];
+          noteObj.id = existing.id;
+          console.log('saveNote: editId degismis, createdAt ile eslestirildi');
+          break;
+        }
+      }
+    }
+
+    if (existing) noteObj.createdAt = existing.createdAt;
+    await updateNote(noteObj);
+}
+```
+
+> **Kök kural:** `update` fonksiyonlarında `if (!bulundu) array.push(item)` KULLANMA — bu kopya oluşturur. ID bulunamazsa `createdAt` fallback ile ara, o da bulamazsa sessizce logla ve push YAPMA.
+> **Not:** Bu sorun sadece notes değil, `local_` → Firebase ID dönüşümü yapan TÜM koleksiyonlarda (payments, paidInstances vb.) olabilir. Her `update` fonksiyonunu kontrol et.
+
 ---
 
 ## 10. Gerekli PNG Dosyaları (KRİTİK HATIRLATMA)
@@ -1399,6 +1490,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] i18n.js: `pay_not_found` çevirisi mevcut
 - [ ] db.js: `syncWithFirebase()` sonunda `idMap` doluysa eski `local_` ID'li bildirimleri iptal + yeni Firebase ID ile yeniden zamanla
 - [ ] notifications.js: `schedule()` bloklarında deprecated property YOK (`foreground`, `vibrate`, `smallIcon`, `priority` → yeni adlarla değiştirilmiş)
+- [ ] update fonksiyonlarında `if (!bulundu) array.push(item)` YOK — `createdAt` fallback ile eşleştir, kopya oluşturma!
 - [ ] `cordova build android` → BUILD SUCCESSFUL
 
 ### VoltBuilder
@@ -1425,6 +1517,7 @@ taskkill /F /IM java.exe                                      # Gradle daemon ki
 - [ ] db.js: `syncWithFirebase()` sonunda `idMap` doluysa eski `local_` ID'li bildirimleri iptal + yeni Firebase ID ile yeniden zamanla
 - [ ] notifications.js: `schedule()` bloklarında deprecated property YOK (`foreground`, `vibrate`, `smallIcon`, `priority` → yeni adlarla değiştirilmiş)
 - [ ] `getSetting()` çağrıları HER YERDE `await` ile kullanılıyor (Promise döner — `await` olmadan NaN/[object Promise] olur!)
+- [ ] update fonksiyonlarında `if (!bulundu) array.push(item)` YOK — `createdAt` fallback ile eşleştir, kopya oluşturma!
 
 ### Google Play
 - [ ] Keystore oluşturuldu + yedeklendi
