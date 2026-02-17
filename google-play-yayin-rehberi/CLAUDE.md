@@ -299,7 +299,14 @@ Doldur:
 | Uygulama/Oyun | Uygulama mı, Oyun mu? | App or Game | Seç |
 | Ücretsiz/Ücretli | Ücretsiz / Ücretli | Free / Paid | ⚠️ Ücretsiz→Ücretli geçiş yok |
 
-Beyanları onayla → 🇹🇷 **"Uygulama oluştur"** / 🇬🇧 **"Create app"**
+Beyanlar (üçünü de işaretle):
+| Beyan | 🇹🇷 | 🇬🇧 |
+|-------|------|------|
+| ☑️ Politikalar | Uygulamam Google Play Geliştirici Program Politikaları'na uygundur | My app meets the Google Play Developer Program Policies |
+| ☑️ İhracat yasaları | ABD ihracat yasalarını kabul ediyorum | I accept the US export laws |
+| ☑️ Uygulama imzalama | Play Uygulama İmzalama Hizmet Şartları'nı kabul ediyorum | I accept the Play App Signing Terms of Service |
+
+→ 🇹🇷 **"Uygulama oluştur"** / 🇬🇧 **"Create app"**
 
 > ✅ **Yaptım** → Adım 7'ye geç
 
@@ -408,7 +415,30 @@ Her bölümü tamamlaman **zorunlu**. "İlgilenilmesi gerekiyor" / "Needs attent
 | Madde kullanımı? | Kontrollü maddeler | Controlled substances |
 | Kumar? | Kumar | Gambling |
 | Kullanıcı etkileşimi? | Etkileşimli öğeler | Interactive elements |
+| Çevrimiçi içerik? | Çevrimiçi içerik | Online content |
+| Konum paylaşımı? | Konum paylaşma | Location sharing |
 | IAP var mı? | Uygulama içi satın alma | In-app purchases |
+| Reklam ID kullanıyor mu? | Reklam kimliği | Advertising ID |
+
+**Senaryo bazlı tipik cevaplar (standart uygulama/oyun):**
+
+| Soru | A (Basit) | B (AdMob) | C-E (AdMob+IAP) | F (Ücretli) |
+|------|-----------|-----------|-----------------|-------------|
+| Şiddet | Hayır | Hayır | Hayır | Hayır |
+| Cinsellik | Hayır | Hayır | Hayır | Hayır |
+| Dil/Küfür | Hayır | Hayır | Hayır | Hayır |
+| Kontrollü maddeler | Hayır | Hayır | Hayır | Hayır |
+| Kumar | Hayır | Hayır | Hayır | Hayır |
+| Etkileşimli öğeler | Hayır* | Hayır* | Hayır* | Hayır* |
+| Çevrimiçi içerik | Hayır** | Evet | Evet | Hayır** |
+| Konum paylaşma | Hayır | Hayır | Hayır | Hayır |
+| IAP | Hayır | Hayır | **Evet** | Hayır |
+| Reklam ID | Hayır | **Evet** | **Evet** | Hayır |
+
+*\*Etkileşimli öğeler: Kullanıcılar arası iletişim varsa (chat, yorum vb.) → Evet*
+*\*\*Çevrimiçi içerik: İnternet gerektiren içerik varsa → Evet*
+
+⚠️ **Uygulamanın içeriğine göre dürüstçe yanıtla!** Yanlış beyan = ret/kaldırma.
 
 4. 🇹🇷 **"Kaydet"** → **"Derecelendirmeyi uygula"**
    🇬🇧 **"Save"** → **"Apply rating"**
@@ -423,7 +453,17 @@ Her bölümü tamamlaman **zorunlu**. "İlgilenilmesi gerekiyor" / "Needs attent
 | Hedef yaş grubu | Hedef yaş grubu | Target age group | 18 ve üzeri (emin değilsen) |
 | Çocuklara yönelik mi? | Öncelikli olarak çocuklara yönelik mi? | Primarily designed for children? | Hayır / No |
 
-⚠️ 13 yaş altı seçersen: 🇹🇷 "Aile politikası" / 🇬🇧 "Families Policy" devreye girer!
+**Yaş grubu seçenekleri:**
+| 🇹🇷 | 🇬🇧 | ⚠️ Not |
+|------|------|--------|
+| 5 yaş ve altı | Ages 5 and under | Aile politikası devreye girer! |
+| 6-8 | Ages 6-8 | Aile politikası devreye girer! |
+| 9-12 | Ages 9-12 | Aile politikası devreye girer! |
+| 13-15 | Ages 13-15 | — |
+| 16-17 | Ages 16-17 | — |
+| 18 ve üzeri | 18 and over | ✅ Önerilen (emin değilsen) |
+
+⚠️ 13 yaş altı seçersen: 🇹🇷 "Aile politikası" / 🇬🇧 "Families Policy" devreye girer! Çok sıkı kurallar, uzun inceleme süresi.
 
 ### 8.6 Haber Uygulaması / News App
 
@@ -456,16 +496,29 @@ Genel akış:
 
 **Sayfa 4 — Veri kullanımı ve işleme / Data usage and handling:** Her veri türü için amaç seç
 
+**Tüm amaç seçenekleri (Purposes):**
+| 🇹🇷 | 🇬🇧 | Ne zaman? |
+|------|------|----------|
+| Uygulama işlevi | App functionality | Uygulama çalışması için gerekli veri |
+| Analiz | Analytics | Crash, kullanım istatistikleri |
+| Geliştirici iletişimleri | Developer communications | Push bildirim, e-posta gönderimi |
+| Reklamcılık veya pazarlama | Advertising or marketing | AdMob, reklam gösterimi |
+| Dolandırıcılık önleme, güvenlik ve uyumluluk | Fraud prevention, security, and compliance | Güvenlik amaçlı veri |
+| Kişiselleştirme | Personalization | Kişiselleştirilmiş içerik/öneriler |
+| Hesap yönetimi | Account management | Hesap oluşturma, giriş, profil |
+
 **Sayfa 5 — Önizleme ve gönder / Preview and submit:**
 - 🇹🇷 **"Gönder"** / 🇬🇧 **"Submit"**
 
 ### 8.8 Diğer Bölümler
 
-| Bölüm | 🇹🇷 | 🇬🇧 | Çoğu uygulama |
-|-------|------|------|---------------|
-| Devlet uygulamaları | Devlet uygulamaları | Government apps | Hayır / No |
-| Finansal özellikler | Finansal özellikler | Financial features | İlgili değilse atla |
-| Sağlık uygulamaları | Sağlık uygulamaları | Health apps | İlgili değilse atla |
+| Bölüm | 🇹🇷 | 🇬🇧 | Senaryo Cevapları |
+|-------|------|------|------------------|
+| Devlet uygulamaları | Devlet uygulamaları | Government apps | Kişisel hesap → **kesinlikle "Hayır/No"**. Kurumsal → devlet uygulamasıysa "Evet" |
+| Finansal özellikler | Finansal özellikler | Financial features | Kişisel hesap → **"Uygulamam finansal özellik sağlamıyor / My app doesn't provide any financial features"**. Kurumsal + finans uygulaması → ilgili seçenekleri işaretle |
+| Sağlık uygulamaları | Sağlık uygulamaları | Health apps | Kişisel hesap → **"Uygulamam sağlık özelliği içermiyor / My app does not have any health features"**. Kurumsal + sağlık uygulaması → ilgili seçenekleri işaretle |
+
+⚠️ **Devlet, finansal ve sağlık uygulamaları yalnızca kurumsal hesaplarla yayınlanabilir!** Kişisel hesaptaysan bu üçüne kesinlikle "Hayır" / "İçermiyor" de.
 
 > ✅ **Yaptım** → Adım 9'a geç
 
