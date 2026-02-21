@@ -1798,20 +1798,6 @@ Kullanıcı onaylarsa: Her madde akış sırasında fonksiyonel olarak kontrol e
 
 > Bu bölüm, Claude ile yapılan sohbetlerde uyulması gereken kuralları tanımlar. Her sohbetin başına bu kurallar eklenir.
 
-<KURAL_ÖZETI — HER MESAJDA OKU>
-K1: KISA YAZ. K2: Soru=sadece cevapla, izinsiz düzeltme yok.
-K3: Dosya güncellemede: kaynak belirt, tek tek güncelle, tam dosya yaz, değişmeyenler aynen kalsın, API/credential dokunulmaz.
-K4.0: Normal istek=2 döngü (websiz analiz + webli doğrulama), "Uygulayayım mı?" sor.
-K4.1: Web'li derin analiz=4 döngü web_search, dosyaya dokunma, "Uygulayayım mı?" sor.
-K4.2: Derin analiz=4 döngü, dosyaya dokunma, "Uygulayayım mı?" sor.
-K4.3: Kod yazarken önce/sırasında/sonrasında web doğrula.
-K5: YASAK: gereksiz açıklama, özür, kısmi kod, web atlamak, izinsiz değişken/isim/config değiştirme.
-K6: "güncelle/yap/düzelt/uygula" YOK = KOD YAZMA. Onay bekle.
-K7: Sadece istenen değişiklik. İyileştirme, ekleme, çıkarma yok.
-K-LOGGER: Yeni fonksiyonda ilk satır _fn('ad'); — exclude listesi hariç.
-UTF-8, Türkçe karakterler bozulmasın: ğüşıöçĞÜŞİÖÇ
-</KURAL_ÖZETI>
-
 ### Karakter Kodlama Kuralı
 - TÜM DOSYALAR UTF-8 (BOM olmadan)
 - TÜRKÇE KARAKTERLER: ğüşıöçĞÜŞİÖÇ
@@ -1965,20 +1951,3 @@ ATLANMAZ. "Biliyorum çalışır" diye atlama = KURAL İHLALİ.
 ### Proje Yönetimi Kuralları
 - Güncelleme yaparken: `[dosya adı] güncelleniyor...` diye belirt
 - Sohbete eklenen dosyalar `/mnt/user-data/uploads/` klasöründedir
-
-<SON_KONTROL — HER MESAJDAN ÖNCE>
-YANLIŞ ✗ → Kullanıcı "Yapabilir misin?" dedi, Claude kod yazdı.
-DOĞRU  ✓ → Kullanıcı "Yapabilir misin?" dedi, Claude "Evet. Uygulayayım mı?" dedi.
-
-YANLIŞ ✗ → Kullanıcı soru sordu, Claude "Şunu da düzelttim..." dedi.
-DOĞRU  ✓ → Kullanıcı soru sordu, Claude sadece soruyu cevapladı.
-
-YANLIŞ ✗ → Derin analiz istendi, Claude dosyayı güncelledi.
-DOĞRU  ✓ → Derin analiz istendi, Claude bulgularını söyledi, "Uygulayayım mı?" dedi.
-
-YANLIŞ ✗ → Dosya güncellemede API anahtarı değişti, fonksiyon ismi değişti.
-DOĞRU  ✓ → Sadece istenen satırlar değişti, geri kalan AYNEN kaldı.
-
-YANLIŞ ✗ → Birden fazla dosya güncellenecek, Claude hepsini art arda yazdı.
-DOĞRU  ✓ → İlk dosya yazıldı, "Sıradaki: [dosya adı]. Güncelleyeyim mi?" diye soruldu.
-</SON_KONTROL>
