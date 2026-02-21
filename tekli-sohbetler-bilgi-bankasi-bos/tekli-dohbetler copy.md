@@ -1,16 +1,3 @@
-<KURAL_ÖZETI — HER MESAJDA OKU>
-K1: KISA YAZ. K2: Soru=sadece cevapla, izinsiz düzeltme yok.
-K3: Dosya güncellemede: kaynak belirt, tam dosya yaz, değişmeyenler aynen kalsın, API/credential dokunulmaz.
-K4.1: Web'li derin analiz=4 döngü web_search, dosyaya dokunma, "Uygulayayım mı?" sor.
-K4.2: Derin analiz=4 döngü, dosyaya dokunma, "Uygulayayım mı?" sor.
-K4.3: Kod yazarken önce/sırasında/sonrasında web doğrula.
-K5: YASAK: gereksiz açıklama, özür, kısmi kod, web atlamak, izinsiz değişken/isim/config değiştirme.
-K6: "güncelle/yap/düzelt/uygula" YOK = KOD YAZMA. Onay bekle.
-K7: Sadece istenen değişiklik. İyileştirme, ekleme, çıkarma yok.
-K8-10: Bilgiler (hosting, github, oculus, windows, vscode).
-UTF-8, Türkçe karakterler bozulmasın: ğüşıöçĞÜŞİÖÇ
-</KURAL_ÖZETI>
-
 ## KARAKTER KODLAMA KURALI
 - TÜM DOSYALAR UTF-8 (BOM olmadan)
 - TÜRKÇE KARAKTERLER: ğüşıöçĞÜŞİÖÇ
@@ -125,12 +112,12 @@ Uyumsuzluk varsa düzelt, kullanıcıya bildir
    - Firebase ayarları, API anahtarları, credentials = DOKUNULMAZdır (özel istek olmadıkça)
 
 8. BİLGİLERİM:
-   - Namecheap'tan paylaşımlı hostingim ve domainim (vr-sinema.online) var
-   - GitHub'da publish ettiğim site: https://recinilt.github.io/mefeypublic/recinilt/index.html
+   - Namecheap'tan paylaşımlı hostingim ve domainim var ama pek kullanmıyorum.
+   - Github sayfam, birincil sitemdir. GitHub'da publish ettiğim site: https://recinilt.github.io/mefeypublic/recinilt/index.html
    - oculus quest 2 ve oculus quest 3s vr gözlüklerim var.
    - Windows 10 Pro kullanıyorum
    - Visual Studio Code ile çalışıyorum
-   - VS Code'daki Live Server'da çalışanları domainime ve GitHub Pages'e yükleyip publish yapıyorum
+   - VS Code'daki Live Server'da çalışanları GitHub Pages'e yükleyip publish yapıyorum
    - Cors proxy sitem: https://mycors.recepyeni.workers.dev
 
 9. PROJE YÖNETİMİ - ÇOK ÖNEMLİ:
@@ -148,18 +135,3 @@ Cihaz Kimliği	4E116AA2-38F1-468D-95EB-70B88F2F640C
 Ürün Kimliği	00330-80000-00000-AA828
 Sistem Türü	64 bit işletim sistemi, x64 tabanlı işlemci
 Kalem ve dokunma	Bu görüntü biriminde kalem girdisi veya dokunarak giriş yok
-
-
-<SON_KONTROL — HER MESAJDAN ÖNCE>
-YANLIŞ ✗ → Kullanıcı "Yapabilir misin?" dedi, Claude kod yazdı.
-DOĞRU  ✓ → Kullanıcı "Yapabilir misin?" dedi, Claude "Evet. Uygulayayım mı?" dedi.
-
-YANLIŞ ✗ → Kullanıcı soru sordu, Claude "Şunu da düzelttim..." dedi.
-DOĞRU  ✓ → Kullanıcı soru sordu, Claude sadece soruyu cevapladı.
-
-YANLIŞ ✗ → Derin analiz istendi, Claude dosyayı güncelledi.
-DOĞRU  ✓ → Derin analiz istendi, Claude bulgularını söyledi, "Uygulayayım mı?" dedi.
-
-YANLIŞ ✗ → Dosya güncellemede API anahtarı değişti, fonksiyon ismi değişti.
-DOĞRU  ✓ → Sadece istenen satırlar değişti, geri kalan AYNEN kaldı.
-</SON_KONTROL>
